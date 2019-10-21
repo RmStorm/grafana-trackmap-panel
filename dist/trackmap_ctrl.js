@@ -39,6 +39,8 @@ System.register(["./leaflet/leaflet.js", "moment", "app/core/app_events", "app/p
       panelDefaults = {
         maxDataPoints: 500,
         autoZoom: true,
+        scrollWheelZoom: false,
+        defaultLayer: 'OpenStreetMap',
         lineColor: 'red',
         pointColor: 'royalblue'
       };
@@ -54,10 +56,30 @@ System.register(["./leaflet/leaflet.js", "moment", "app/core/app_events", "app/p
           _classCallCheck(this, TrackMapCtrl);
 
           _this = _possibleConstructorReturn(this, _getPrototypeOf(TrackMapCtrl).call(this, $scope, $injector));
-          log("constructor");
+          log('constructor');
 
-          _.defaults(_this.panel, panelDefaults);
+          _.defaults(_this.panel, panelDefaults); // Save layers globally in order to use them in options
 
+
+          _this.layers = {
+            OpenStreetMap: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+              attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+              maxZoom: 19
+            }),
+            OpenTopoMap: L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+              attribution: 'Map data: &copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>, <a href="http://viewfinderpanoramas.org">SRTM</a> | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)',
+              maxZoom: 17
+            }),
+            Satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+              attribution: 'Imagery &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
+              // This map doesn't have labels so we force a label-only layer on top of it
+              forcedOverlay: L.tileLayer('https://stamen-tiles-{s}.a.ssl.fastly.net/toner-labels/{z}/{x}/{y}.png', {
+                attribution: 'Labels by <a href="http://stamen.com">Stamen Design</a>, <a href="http://creativecommons.org/licenses/by/3.0">CC BY 3.0</a> &mdash; Map data &copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+                subdomains: 'abcd',
+                maxZoom: 20
+              })
+            })
+          };
           _this.timeSrv = $injector.get('timeSrv');
           _this.coords = [];
           _this.leafMap = null;
@@ -89,25 +111,25 @@ System.register(["./leaflet/leaflet.js", "moment", "app/core/app_events", "app/p
         _createClass(TrackMapCtrl, [{
           key: "onInitialized",
           value: function onInitialized() {
-            log("onInitialized");
+            log('onInitialized');
             this.render();
           }
         }, {
           key: "onInitEditMode",
           value: function onInitEditMode() {
-            log("onInitEditMode");
+            log('onInitEditMode');
             this.addEditorTab('Options', 'public/plugins/pr0ps-trackmap-panel/partials/options.html', 2);
           }
         }, {
           key: "onPanelTeardown",
           value: function onPanelTeardown() {
-            log("onPanelTeardown");
+            log('onPanelTeardown');
             this.$timeout.cancel(this.setSizePromise);
           }
         }, {
           key: "onPanelHover",
           value: function onPanelHover(evt) {
-            log("onPanelHover");
+            log('onPanelHover');
 
             if (this.coords.length === 0) {
               return;
@@ -122,10 +144,7 @@ System.register(["./leaflet/leaflet.js", "moment", "app/core/app_events", "app/p
 
 
             if (this.hoverTarget == null) {
-              this.hoverMarker.bringToFront().setStyle({
-                fillColor: this.panel.pointColor,
-                color: 'white'
-              });
+              this.hoverMarker.addTo(this.leafMap);
             }
 
             this.hoverTarget = target; // Find the currently selected time and move the hoverMarker to it
@@ -155,26 +174,45 @@ System.register(["./leaflet/leaflet.js", "moment", "app/core/app_events", "app/p
               idx--;
             }
 
-            this.hoverMarker.setLatLng(this.coords[idx].position);
+            this.hoverMarker.setLatLng(this.coords[idx].position); // Add time and location tooltip
+
+            if (this.leafMap.hasLayer(this.time_stamp_tool_tip) || this.leafMap.hasLayer(this.coordinate_tool_tip)) {
+              var info = document.createElement('ul');
+              info.className = 'tooltip-info';
+              var time = document.createElement('li');
+              var lat = document.createElement('li');
+              var lon = document.createElement('li');
+
+              if (this.leafMap.hasLayer(this.time_stamp_tool_tip)) {
+                time.innerHTML = "Timestamp : ".concat(new Date(this.coords[idx].timestamp).toLocaleString('en-GB'));
+                info.appendChild(time);
+              }
+
+              if (this.leafMap.hasLayer(this.coordinate_tool_tip)) {
+                lat.innerHTML = "Latitude : ".concat(this.coords[idx].position.lat);
+                lon.innerHTML = "Longitude : ".concat(this.coords[idx].position.lng);
+                info.appendChild(lat);
+                info.appendChild(lon);
+              }
+
+              this.hoverMarker.bindTooltip(info).openTooltip();
+            }
           }
         }, {
           key: "onPanelClear",
           value: function onPanelClear(evt) {
-            log("onPanelClear"); // clear the highlighted circle
+            log('onPanelClear'); // clear the highlighted circle
 
             this.hoverTarget = null;
 
             if (this.hoverMarker) {
-              this.hoverMarker.setStyle({
-                fillColor: 'none',
-                color: 'none'
-              });
+              this.hoverMarker.removeFrom(this.leafMap);
             }
           }
         }, {
           key: "onViewModeChanged",
           value: function onViewModeChanged() {
-            log("onViewModeChanged"); // KLUDGE: When the view mode is changed, panel resize events are not
+            log('onViewModeChanged'); // KLUDGE: When the view mode is changed, panel resize events are not
             //         emitted even if the panel was resized. Work around this by telling
             //         the panel it's been resized whenever the view mode changes.
 
@@ -183,22 +221,52 @@ System.register(["./leaflet/leaflet.js", "moment", "app/core/app_events", "app/p
         }, {
           key: "onPanelSizeChanged",
           value: function onPanelSizeChanged() {
-            log("onPanelSizeChanged"); // KLUDGE: This event is fired too soon - we need to delay doing the actual
+            log('onPanelSizeChanged'); // KLUDGE: This event is fired too soon - we need to delay doing the actual
             //         size invalidation until after the panel has actually been resized.
 
             this.$timeout.cancel(this.setSizePromise);
             var map = this.leafMap;
             this.setSizePromise = this.$timeout(function () {
               if (map) {
-                log("Invalidating map size");
+                log('Invalidating map size');
                 map.invalidateSize(true);
               }
             }, 500);
           }
         }, {
+          key: "applyScrollZoom",
+          value: function applyScrollZoom() {
+            var enabled = this.leafMap.scrollWheelZoom.enabled();
+
+            if (enabled != this.panel.scrollWheelZoom) {
+              if (enabled) {
+                this.leafMap.scrollWheelZoom.disable();
+              } else {
+                this.leafMap.scrollWheelZoom.enable();
+              }
+            }
+          }
+        }, {
+          key: "applyDefaultLayer",
+          value: function applyDefaultLayer() {
+            var _this2 = this;
+
+            var hadMap = Boolean(this.leafMap);
+            this.setupMap(); // Only need to re-add layers if the map previously existed
+
+            if (hadMap) {
+              this.leafMap.eachLayer(function (layer) {
+                layer.removeFrom(_this2.leafMap);
+              });
+              this.layers[this.panel.defaultLayer].addTo(this.leafMap);
+            }
+
+            this.addDataToMap();
+          }
+        }, {
           key: "setupMap",
           value: function setupMap() {
-            log("setupMap"); // Create the map or get it back in a clean state if it already exists
+            log('setupMap'); // Create the map or get it back in a clean state if it already exists
 
             if (this.leafMap) {
               if (this.polyline) {
@@ -211,39 +279,28 @@ System.register(["./leaflet/leaflet.js", "moment", "app/core/app_events", "app/p
 
 
             this.leafMap = L.map('trackmap-' + this.panel.id, {
-              scrollWheelZoom: false,
+              scrollWheelZoom: this.panel.scrollWheelZoom,
               zoomSnap: 0.5,
               zoomDelta: 1
-            }); // Define layers and add them to the control widget
+            });
+            this.time_stamp_tool_tip = L.layerGroup([]);
+            this.coordinate_tool_tip = L.layerGroup([]);
+            this.ToolTipLayers = {
+              Timestamp: this.time_stamp_tool_tip,
+              Coordinates: this.coordinate_tool_tip
+            }; // Add layers to the control widget
 
-            L.control.layers({
-              'OpenStreetMap': L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-                maxZoom: 19
-              }).addTo(this.leafMap),
-              // Add default layer to map
-              'OpenTopoMap': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
-                attribution: 'Map data: &copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>, <a href="http://viewfinderpanoramas.org">SRTM</a> | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)',
-                maxZoom: 17
-              }),
-              'Satellite': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-                attribution: 'Imagery &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
-                // This map doesn't have labels so we force a label-only layer on top of it
-                forcedOverlay: L.tileLayer('https://stamen-tiles-{s}.a.ssl.fastly.net/toner-labels/{z}/{x}/{y}.png', {
-                  attribution: 'Labels by <a href="http://stamen.com">Stamen Design</a>, <a href="http://creativecommons.org/licenses/by/3.0">CC BY 3.0</a> &mdash; Map data &copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-                  subdomains: 'abcd',
-                  maxZoom: 20
-                })
-              })
-            }).addTo(this.leafMap); // Dummy hovermarker
+            L.control.layers(this.layers, this.ToolTipLayers).addTo(this.leafMap); // Add default layer to map
+
+            this.layers[this.panel.defaultLayer].addTo(this.leafMap); // Hover marker
 
             this.hoverMarker = L.circleMarker(L.latLng(0, 0), {
-              color: 'none',
-              fillColor: 'none',
+              color: 'white',
+              fillColor: this.panel.pointColor,
               fillOpacity: 1,
               weight: 2,
               radius: 7
-            }).addTo(this.leafMap); // Events
+            }); // Events
 
             this.leafMap.on('baselayerchange', this.mapBaseLayerChange.bind(this));
             this.leafMap.on('boxzoomend', this.mapZoomToBox.bind(this));
@@ -269,7 +326,7 @@ System.register(["./leaflet/leaflet.js", "moment", "app/core/app_events", "app/p
         }, {
           key: "mapZoomToBox",
           value: function mapZoomToBox(e) {
-            log("mapZoomToBox"); // Find time bounds of selected coordinates
+            log('mapZoomToBox'); // Find time bounds of selected coordinates
 
             var bounds = this.coords.reduce(function (t, c) {
               if (e.boxZoomBounds.contains(c.position)) {
@@ -296,7 +353,7 @@ System.register(["./leaflet/leaflet.js", "moment", "app/core/app_events", "app/p
         }, {
           key: "addDataToMap",
           value: function addDataToMap() {
-            log("addDataToMap");
+            log('addDataToMap');
             this.polyline = L.polyline(this.coords.map(function (x) {
               return x.position;
             }, this), {
@@ -308,9 +365,9 @@ System.register(["./leaflet/leaflet.js", "moment", "app/core/app_events", "app/p
         }, {
           key: "zoomToFit",
           value: function zoomToFit() {
-            log("zoomToFit");
+            log('zoomToFit');
 
-            if (this.panel.autoZoom) {
+            if (this.panel.autoZoom && this.polyline) {
               this.leafMap.fitBounds(this.polyline.getBounds());
             }
 
@@ -319,11 +376,17 @@ System.register(["./leaflet/leaflet.js", "moment", "app/core/app_events", "app/p
         }, {
           key: "refreshColors",
           value: function refreshColors() {
-            log("refreshColors");
+            log('refreshColors');
 
             if (this.polyline) {
               this.polyline.setStyle({
                 color: this.panel.lineColor
+              });
+            }
+
+            if (this.hoverMarker) {
+              this.hoverMarker.setStyle({
+                fillColor: this.panel.pointColor
               });
             }
 
@@ -332,7 +395,7 @@ System.register(["./leaflet/leaflet.js", "moment", "app/core/app_events", "app/p
         }, {
           key: "onDataReceived",
           value: function onDataReceived(data) {
-            log("onDataReceived");
+            log('onDataReceived');
             this.setupMap();
 
             if (data.length === 0 || data.length !== 2) {
@@ -348,7 +411,7 @@ System.register(["./leaflet/leaflet.js", "moment", "app/core/app_events", "app/p
             var lons = data[1].datapoints;
 
             for (var i = 0; i < lats.length; i++) {
-              if (lats[i][0] == null || lons[i][0] == null || lats[i][1] !== lats[i][1]) {
+              if (lats[i][0] == null || lons[i][0] == null || lats[i][1] !== lons[i][1]) {
                 continue;
               }
 
@@ -363,7 +426,7 @@ System.register(["./leaflet/leaflet.js", "moment", "app/core/app_events", "app/p
         }, {
           key: "onDataSnapshotLoad",
           value: function onDataSnapshotLoad(snapshotData) {
-            log("onSnapshotLoad");
+            log('onSnapshotLoad');
             this.onDataReceived(snapshotData);
           }
         }]);
